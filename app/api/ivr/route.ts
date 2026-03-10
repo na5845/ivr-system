@@ -1,62 +1,54 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!);
-
 export async function GET(request: Request) {
+  console.log(">>> [START] New request received");
+  
+  const { searchParams } = new URL(request.url);
+  let campaignId = searchParams.get('campaign_id');
+  const currentStep = searchParams.get('next_step') || '1';
+
+  // ניקוי ה-ID
+  if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
+  
+  console.log(`>>> [INFO] Campaign: ${campaignId}, Step: ${currentStep}`);
+
+  // בדיקת קיום משתני סביבה (בלי להדפיס את המפתח עצמו)
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    console.log(">>> [ERROR] Supabase Keys are missing in Vercel!");
+    return new Response('id_list_message=t-Environment variables missing\nhangup=yes');
+  }
+
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+
   try {
-    const { searchParams } = new URL(request.url);
-    const phone = searchParams.get('ApiPhone');
-    let campaignId = searchParams.get('campaign_id');
-    const currentStepOrder = parseInt(searchParams.get('next_step') || '1');
-    const lastAnswer = searchParams.get('ApiEnter');
-
-    if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
-
-    console.log(`Checking Step ${currentStepOrder} for Campaign ${campaignId}`);
-
-    if (!phone || !campaignId) return new Response('id_list_message=t-missing parameters\nhangup=yes');
-
-    // שמירה (רק אם יש תשובה)
-    if (lastAnswer && currentStepOrder > 1) {
-      const { data: prevStep } = await supabase
-        .from('campaign_steps')
-        .select('data_key')
-        .eq('campaign_id', campaignId)
-        .eq('step_order', currentStepOrder - 1)
-        .single();
-
-      if (prevStep?.data_key) {
-        await supabase.rpc('update_lead_data', {
-          p_phone: phone,
-          p_campaign_id: campaignId,
-          p_key: prevStep.data_key,
-          p_value: lastAnswer
-        });
-      }
-    }
-
-    // שליפת השלב
-    const { data: step, error } = await supabase
+    console.log(">>> [DB] Attempting to fetch step...");
+    
+    const { data, error } = await supabase
       .from('campaign_steps')
       .select('*')
       .eq('campaign_id', campaignId)
-      .eq('step_order', currentStepOrder)
+      .eq('step_order', parseInt(currentStep))
       .single();
 
-    if (error || !step) {
-      console.log('Step not found in DB');
-      return new Response('id_list_message=t-לא נמצא שלב תואם במסד הנתונים\nhangup=yes', {
-        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-      });
+    if (error) {
+      console.log(`>>> [DB ERROR] ${error.message}`);
+      return new Response(`id_list_message=t-Database error ${error.message}\nhangup=yes`);
     }
 
-    const response = `read=${step.message_file}=no,1,1,1,7,#,yes&campaign_id=${campaignId}&next_step=${currentStepOrder + 1}`;
+    if (!data) {
+      console.log(">>> [DB] No data found for this campaign/step");
+      return new Response('id_list_message=t-Step not found\nhangup=yes');
+    }
+
+    console.log(">>> [SUCCESS] Step found:", data.message_file);
+    
+    const response = `id_list_message=${data.message_file}\nhangup=yes`;
+    console.log(">>> [FINAL] Sending to Yemot:", response);
+    
     return new Response(response, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 
   } catch (err: any) {
-    console.error('Crash error:', err.message);
-    return new Response(`id_list_message=t-שגיאת קוד ${err.message}\nhangup=yes`, {
-      headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-    });
+    console.log(`>>> [CRASH] Fatal error: ${err.message}`);
+    return new Response(`id_list_message=t-Server crash ${err.message}\nhangup=yes`);
   }
 }
