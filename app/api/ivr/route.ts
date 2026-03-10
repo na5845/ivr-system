@@ -1,63 +1,54 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!);
-
 export async function GET(request: Request) {
+  console.log(">>> [START] New request received");
+  
   const { searchParams } = new URL(request.url);
-  const phone = searchParams.get('ApiPhone');
   let campaignId = searchParams.get('campaign_id');
-  const currentStep = parseInt(searchParams.get('next_step') || '1');
-  const lastAnswer = searchParams.get('ApiEnter');
+  const currentStep = searchParams.get('next_step') || '1';
 
-  // 1. ניקוי campaignId
+  // ניקוי ה-ID
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
-  if (!phone || !campaignId) return new Response('hangup=yes');
+  
+  console.log(`>>> [INFO] Campaign: ${campaignId}, Step: ${currentStep}`);
 
-  console.log(`>>> Step: ${currentStep}, Phone: ${phone}, Answer: ${lastAnswer}`);
+  // בדיקת קיום משתני סביבה (בלי להדפיס את המפתח עצמו)
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    console.log(">>> [ERROR] Supabase Keys are missing in Vercel!");
+    return new Response('id_list_message=t-Environment variables missing\nhangup=yes');
+  }
 
-  // 2. שמירת תשובה משלב קודם
-  if (lastAnswer && currentStep > 1) {
-    const { data: prevStep } = await supabase
+  const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+
+  try {
+    console.log(">>> [DB] Attempting to fetch step...");
+    
+    const { data, error } = await supabase
       .from('campaign_steps')
-      .select('data_key')
+      .select('*')
       .eq('campaign_id', campaignId)
-      .eq('step_order', currentStep - 1)
+      .eq('step_order', parseInt(currentStep))
       .single();
 
-    if (prevStep?.data_key) {
-      await supabase.rpc('update_lead_data', {
-        p_phone: phone,
-        p_campaign_id: campaignId,
-        p_key: prevStep.data_key,
-        p_value: lastAnswer
-      });
-      console.log(`>>> Saved ${prevStep.data_key}: ${lastAnswer}`);
+    if (error) {
+      console.log(`>>> [DB ERROR] ${error.message}`);
+      return new Response(`id_list_message=t-Database error ${error.message}\nhangup=yes`);
     }
+
+    if (!data) {
+      console.log(">>> [DB] No data found for this campaign/step");
+      return new Response('id_list_message=t-Step not found\nhangup=yes');
+    }
+
+    console.log(">>> [SUCCESS] Step found:", data.message_file);
+    
+    const response = `id_list_message=${data.message_file}\nhangup=yes`;
+    console.log(">>> [FINAL] Sending to Yemot:", response);
+    
+    return new Response(response, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+
+  } catch (err: any) {
+    console.log(`>>> [CRASH] Fatal error: ${err.message}`);
+    return new Response(`id_list_message=t-Server crash ${err.message}\nhangup=yes`);
   }
-
-  // 3. שליפת השלב הנוכחי
-  const { data: step, error } = await supabase
-    .from('campaign_steps')
-    .select('*')
-    .eq('campaign_id', campaignId)
-    .eq('step_order', currentStep)
-    .single();
-
-  if (error || !step) {
-    // סיום השיחה
-    return new Response('id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה\nhangup=yes', {
-      headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-    });
-  }
-
-  // 4. פקודת READ אחת ונקייה
-  // הפורמט: read=קובץ_או_טקסט=retype,min,max,timeout,type,allow_none,allow_hash
-  // אנחנו משתמשים ב-7 שניות המתנה ומינימום/מקסימום ספרה אחת
-  const response = `read=${step.message_file}=no,1,1,7,Digits,no,no&campaign_id=${campaignId}&next_step=${currentStep + 1}`;
-  
-  console.log('>>> Final Response:', response.trim());
-
-  return new Response(response.trim(), {
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-  });
 }
