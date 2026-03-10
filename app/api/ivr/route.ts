@@ -12,9 +12,9 @@ export async function GET(request: Request) {
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Step ${currentStep} | Answer: ${lastAnswer}`);
+  console.log(`>>> Connection: Step ${currentStep}, Answer: ${lastAnswer}`);
 
-  // 1. שמירת תשובה (אם קיימת)
+  // 1. שמירת תשובה משלב קודם
   if (lastAnswer && currentStep > 1) {
     const { data: prevStep } = await supabase
       .from('campaign_steps')
@@ -33,7 +33,7 @@ export async function GET(request: Request) {
     }
   }
 
-  // 2. שליפת השלב הבא
+  // 2. שליפת השלב הנוכחי
   const { data: step, error } = await supabase
     .from('campaign_steps')
     .select('*')
@@ -42,24 +42,21 @@ export async function GET(request: Request) {
     .single();
 
   if (error || !step) {
-    return new Response('id_list_message=t-תודה_רבה_הזמנתכם_נקלטה\nhangup=yes', {
+    return new Response('id_list_message=t-תודה רבה הבחירות שלך נשמרו בהצלחה\nhangup=yes', {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 3. הטריק הקריטי: החלפת רווחים בקו תחתי (_)
-  let msg = step.message_file;
-  if (!msg.startsWith('t-') && !/^\d+$/.test(msg)) msg = 't-' + msg;
+  // 3. בניית התגובה בשתי שורות נפרדות (השיטה הכי יציבה)
+  const messageText = step.message_file.startsWith('t-') ? step.message_file : `t-${step.message_file}`;
   
-  // מחליף את כל הרווחים בקו תחתי כדי שהפקודה לא תישבר
-  const underscoredMsg = msg.replace(/\s+/g, '_');
-
-  // 4. פקודת ה-read בפורמט הכי יציב (בדיוק 7 פרמטרים)
-  const response = `read=${underscoredMsg}=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
+  // שורה 1: משמיע את הטקסט
+  // שורה 2: מחכה להקשה (על נקודה . שזה שקט) ושולח את התוצאה לשלב הבא
+  const finalResponse = `id_list_message=${messageText}\nread=t-.=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
   
-  console.log('>>> Final Response:', response);
+  console.log('>>> Sending Response:\n', finalResponse);
 
-  return new Response(response, {
+  return new Response(finalResponse, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
   });
 }
