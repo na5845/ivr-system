@@ -3,57 +3,60 @@ import { createClient } from '@supabase/supabase-js';
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!);
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url);
-  const phone = searchParams.get('ApiPhone');
-  let campaignId = searchParams.get('campaign_id');
-  const currentStepOrder = parseInt(searchParams.get('next_step') || '1');
-  const lastAnswer = searchParams.get('ApiEnter'); // מה שהמשתמש הקיש
+  try {
+    const { searchParams } = new URL(request.url);
+    const phone = searchParams.get('ApiPhone');
+    let campaignId = searchParams.get('campaign_id');
+    const currentStepOrder = parseInt(searchParams.get('next_step') || '1');
+    const lastAnswer = searchParams.get('ApiEnter');
 
-  // ניקוי ID
-  if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
+    if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
 
-  if (!phone || !campaignId) return new Response('hangup=yes');
+    console.log(`Checking Step ${currentStepOrder} for Campaign ${campaignId}`);
 
-  // 1. שמירת התשובה מהשלב הקודם
-  if (lastAnswer) {
-    // נמצא איזה מפתח נתונים שייך לשלב שזה עתה הסתיים
-    const { data: prevStep } = await supabase
+    if (!phone || !campaignId) return new Response('id_list_message=t-missing parameters\nhangup=yes');
+
+    // שמירה (רק אם יש תשובה)
+    if (lastAnswer && currentStepOrder > 1) {
+      const { data: prevStep } = await supabase
+        .from('campaign_steps')
+        .select('data_key')
+        .eq('campaign_id', campaignId)
+        .eq('step_order', currentStepOrder - 1)
+        .single();
+
+      if (prevStep?.data_key) {
+        await supabase.rpc('update_lead_data', {
+          p_phone: phone,
+          p_campaign_id: campaignId,
+          p_key: prevStep.data_key,
+          p_value: lastAnswer
+        });
+      }
+    }
+
+    // שליפת השלב
+    const { data: step, error } = await supabase
       .from('campaign_steps')
-      .select('data_key')
+      .select('*')
       .eq('campaign_id', campaignId)
-      .eq('step_order', currentStepOrder - 1)
+      .eq('step_order', currentStepOrder)
       .single();
 
-    if (prevStep?.data_key) {
-      await supabase.rpc('update_lead_data', {
-        p_phone: phone,
-        p_campaign_id: campaignId,
-        p_key: prevStep.data_key,
-        p_value: lastAnswer
+    if (error || !step) {
+      console.log('Step not found in DB');
+      return new Response('id_list_message=t-לא נמצא שלב תואם במסד הנתונים\nhangup=yes', {
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' }
       });
     }
-  }
 
-  // 2. שליפת השלב הנוכחי
-  const { data: step, error } = await supabase
-    .from('campaign_steps')
-    .select('*')
-    .eq('campaign_id', campaignId)
-    .eq('step_order', currentStepOrder)
-    .single();
+    const response = `read=${step.message_file}=no,1,1,1,7,#,yes&campaign_id=${campaignId}&next_step=${currentStepOrder + 1}`;
+    return new Response(response, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 
-  // אם סיימנו את כל השלבים
-  if (error || !step) {
-    return new Response('id_list_message=t-תודה רבה, הזמנתך התקבלה בהצלחה\nhangup=yes', {
+  } catch (err: any) {
+    console.error('Crash error:', err.message);
+    return new Response(`id_list_message=t-שגיאת קוד ${err.message}\nhangup=yes`, {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
-
-  // 3. יצירת פקודת ה-Read (זה הלב של המערכת)
-  // הפקודה אומרת: תשמיע את הקובץ, ותחזור לאותו URL עם השלב הבא והתשובה
-  const response = `read=${step.message_file}=no,1,1,1,7,#,yes&campaign_id=${campaignId}&next_step=${currentStepOrder + 1}`;
-
-  return new Response(response, {
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-  });
 }
