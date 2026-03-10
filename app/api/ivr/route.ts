@@ -6,16 +6,15 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const phone = searchParams.get('ApiPhone');
   let campaignId = searchParams.get('campaign_id');
-  const lastAnswer = searchParams.get('ApiEnter'); // התשובה שהתקבלה מהקשה קודמת
+  const lastAnswer = searchParams.get('ApiEnter');
 
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Incoming: Phone: ${phone}, Answer: ${lastAnswer}`);
+  console.log(`>>> Incoming Request | Phone: ${phone} | Answer: ${lastAnswer}`);
 
-  // 1. אם המשתמש הקיש משהו, נשמור אותו לשדה הבא שחסר
-  if (lastAnswer) {
-    // נשלוף את הליד הקיים
+  // 1. שמירת הנתונים לפי מה שחסר ב-DB
+  if (lastAnswer && lastAnswer !== 'null') {
     const { data: lead } = await supabase
       .from('leads')
       .select('data')
@@ -23,8 +22,8 @@ export async function GET(request: Request) {
       .eq('campaign_id', campaignId)
       .single();
 
-    let keyToSave = 'map_type'; // כברירת מחדל נשמור לסוג מפה
-    if (lead?.data?.map_type) keyToSave = 'map_size'; // אם כבר יש סוג, נשמור למידה
+    const currentData = lead?.data || {};
+    let keyToSave = !currentData.map_type ? 'map_type' : 'map_size';
 
     await supabase.rpc('update_lead_data', {
       p_phone: phone,
@@ -32,38 +31,39 @@ export async function GET(request: Request) {
       p_key: keyToSave,
       p_value: lastAnswer
     });
-    console.log(`>>> Saved ${keyToSave}: ${lastAnswer}`);
+    console.log(`>>> DB Updated: ${keyToSave} = ${lastAnswer}`);
   }
 
-  // 2. נבדוק שוב מה חסר עכשיו כדי לדעת מה לשאול
-  const { data: updatedLead } = await supabase
+  // 2. בדיקה מה השאלה הבאה שצריך לשאול
+  const { data: checkLead } = await supabase
     .from('leads')
     .select('data')
     .eq('phone', phone)
     .eq('campaign_id', campaignId)
     .single();
 
+  const leadData = checkLead?.data || {};
   let question = "";
-  if (!updatedLead?.data?.map_type) {
+
+  if (!leadData.map_type) {
     question = "t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2";
-  } else if (!updatedLead?.data?.map_size) {
+  } else if (!leadData.map_size) {
     question = "t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3";
   }
 
-  // 3. אם סיימנו את כל השאלות
-  if (!question) {
-    return new Response('id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה&hangup=yes', {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' }
-    });
+  // 3. בניית התגובה - ירידת שורה נקייה בלבד בין הפקודות
+  let responseText = "";
+  if (question) {
+    // פקודה 1: השמעת השאלה | פקודה 2: המתנה להקשה (על טקסט קצר כדי שלא יישבר)
+    responseText = `id_list_message=${question}\nread=t- . =no,1,1,10,digits,no,no`;
+  } else {
+    responseText = `id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה\nhangup=yes`;
   }
 
-  // 4. התגובה הכי נקייה בעולם (בלי תווים מיותרים בסוף)
-  // אנחנו משתמשים ב-id_list_message לדיבור וב-read שקט להקשה - זה השילוב הכי יציב
-  const finalResponse = `id_list_message=${question}&read=t- =no,1,1,10,digits,no,no`;
-  
-  console.log('>>> Sending Clean Response:', finalResponse);
+  console.log(">>> Final Clean Response:\n", responseText);
 
-  return new Response(finalResponse, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  // החזרה של הטקסט ללא שום רווחים מיותרים בהתחלה או בסוף
+  return new Response(responseText.trim(), {
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' }
   });
 }
