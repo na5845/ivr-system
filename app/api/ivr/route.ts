@@ -9,12 +9,13 @@ export async function GET(request: Request) {
   const currentStep = parseInt(searchParams.get('next_step') || '1');
   const lastAnswer = searchParams.get('ApiEnter');
 
+  // 1. ניקוי campaignId
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Processing Step ${currentStep} for ${phone}`);
+  console.log(`>>> Step: ${currentStep}, Phone: ${phone}, Answer: ${lastAnswer}`);
 
-  // 1. שמירת תשובה משלב קודם
+  // 2. שמירת תשובה משלב קודם
   if (lastAnswer && currentStep > 1) {
     const { data: prevStep } = await supabase
       .from('campaign_steps')
@@ -34,7 +35,7 @@ export async function GET(request: Request) {
     }
   }
 
-  // 2. שליפת השלב הנוכחי
+  // 3. שליפת השלב הנוכחי
   const { data: step, error } = await supabase
     .from('campaign_steps')
     .select('*')
@@ -43,21 +44,20 @@ export async function GET(request: Request) {
     .single();
 
   if (error || !step) {
-    return new Response('id_list_message=t-תודה רבה בחירתך נשמרה\nhangup=yes', {
+    // סיום השיחה
+    return new Response('id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה\nhangup=yes', {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 3. בניית התגובה בשתי שורות נפרדות (למניעת שגיאות)
-  // שורה 1: השמעת ההודעה
-  // שורה 2: המתנה להקשה (ה-t-. הוא צליל שקט קצרצר)
-  const cleanMessage = step.message_file.replace(/[.,]/g, ''); // הסרת נקודות ופסיקים מהטקסט
+  // 4. פקודת READ אחת ונקייה
+  // הפורמט: read=קובץ_או_טקסט=retype,min,max,timeout,type,allow_none,allow_hash
+  // אנחנו משתמשים ב-7 שניות המתנה ומינימום/מקסימום ספרה אחת
+  const response = `read=${step.message_file}=no,1,1,7,Digits,no,no&campaign_id=${campaignId}&next_step=${currentStep + 1}`;
   
-  const finalResponse = `id_list_message=${cleanMessage}\nread=t-.=no,1,1,10,Digits,yes,no&campaign_id=${campaignId}&next_step=${currentStep + 1}`;
-  
-  console.log('>>> Sending Response:\n', finalResponse);
+  console.log('>>> Final Response:', response.trim());
 
-  return new Response(finalResponse, {
+  return new Response(response.trim(), {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
   });
 }
