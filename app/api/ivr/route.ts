@@ -3,70 +3,67 @@ import { createClient } from '@supabase/supabase-js';
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!);
 
 export async function GET(request: Request) {
-  try {
-    const { searchParams } = new URL(request.url);
-    const phone = searchParams.get('ApiPhone');
-    let campaignId = searchParams.get('campaign_id');
-    const currentStep = parseInt(searchParams.get('next_step') || '1');
-    const lastAnswer = searchParams.get('ApiEnter');
+  const { searchParams } = new URL(request.url);
+  const phone = searchParams.get('ApiPhone');
+  let campaignId = searchParams.get('campaign_id');
+  const lastAnswer = searchParams.get('ApiEnter'); // התשובה שהתקבלה מהקשה קודמת
 
-    if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
-    
-    // בדיקת בסיס
-    if (!phone || !campaignId) return new Response('hangup=yes');
+  if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
+  if (!phone || !campaignId) return new Response('hangup=yes');
 
-    console.log(`>>> LOG: Step ${currentStep} | Phone ${phone} | Answer ${lastAnswer}`);
+  console.log(`>>> Incoming: Phone: ${phone}, Answer: ${lastAnswer}`);
 
-    // 1. שמירת תשובה (אם קיימת)
-    if (lastAnswer && currentStep > 1) {
-      const { data: prevStep } = await supabase
-        .from('campaign_steps')
-        .select('data_key')
-        .eq('campaign_id', campaignId)
-        .eq('step_order', currentStep - 1)
-        .single();
-
-      if (prevStep?.data_key) {
-        await supabase.rpc('update_lead_data', {
-          p_phone: phone,
-          p_campaign_id: campaignId,
-          p_key: prevStep.data_key,
-          p_value: lastAnswer
-        });
-      }
-    }
-
-    // 2. שליפת השלב
-    const { data: step, error } = await supabase
-      .from('campaign_steps')
-      .select('*')
+  // 1. אם המשתמש הקיש משהו, נשמור אותו לשדה הבא שחסר
+  if (lastAnswer) {
+    // נשלוף את הליד הקיים
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('data')
+      .eq('phone', phone)
       .eq('campaign_id', campaignId)
-      .eq('step_order', currentStep)
       .single();
 
-    if (error || !step) {
-      const finishMsg = "read=t-תודה רבה בחירתך נשמרה=no,1,1,1,digits,no,no&hangup=yes";
-      return new Response(finishMsg, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-    }
+    let keyToSave = 'map_type'; // כברירת מחדל נשמור לסוג מפה
+    if (lead?.data?.map_type) keyToSave = 'map_size'; // אם כבר יש סוג, נשמור למידה
 
-    // 3. הכנת ההודעה - ניקוי אגרסיבי של תווים מיוחדים
-    let msg = step.message_file;
-    if (!msg.startsWith('t-') && !/^\d+$/.test(msg)) msg = 't-' + msg;
-    
-    // הסרת פסיקים, נקודות וסימני שאלה שמשגעים את ימות המשיח בתוך read
-    const safeMsg = msg.replace(/[.,?=]/g, '');
+    await supabase.rpc('update_lead_data', {
+      p_phone: phone,
+      p_campaign_id: campaignId,
+      p_key: keyToSave,
+      p_value: lastAnswer
+    });
+    console.log(`>>> Saved ${keyToSave}: ${lastAnswer}`);
+  }
 
-    // 4. בניית הפקודה - שים לב: הכל בשורה אחת, בלי רווחים מיותרים בפרמטרים
-    const responseBody = `read=${safeMsg}=no,1,1,10,Digits,no,no&next_step=${currentStep + 1}`;
-    
-    console.log(`>>> SENDING TO YEMOT: ${responseBody}`);
+  // 2. נבדוק שוב מה חסר עכשיו כדי לדעת מה לשאול
+  const { data: updatedLead } = await supabase
+    .from('leads')
+    .select('data')
+    .eq('phone', phone)
+    .eq('campaign_id', campaignId)
+    .single();
 
-    return new Response(responseBody, {
+  let question = "";
+  if (!updatedLead?.data?.map_type) {
+    question = "t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2";
+  } else if (!updatedLead?.data?.map_size) {
+    question = "t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3";
+  }
+
+  // 3. אם סיימנו את כל השאלות
+  if (!question) {
+    return new Response('id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה&hangup=yes', {
       headers: { 'Content-Type': 'text/html; charset=utf-8' }
     });
-
-  } catch (err: any) {
-    console.error('>>> CRITICAL ERROR:', err.message);
-    return new Response(`id_list_message=t-שגיאה בשרת ${err.message}&hangup=yes`);
   }
+
+  // 4. התגובה הכי נקייה בעולם (בלי תווים מיותרים בסוף)
+  // אנחנו משתמשים ב-id_list_message לדיבור וב-read שקט להקשה - זה השילוב הכי יציב
+  const finalResponse = `id_list_message=${question}&read=t- =no,1,1,10,digits,no,no`;
+  
+  console.log('>>> Sending Clean Response:', finalResponse);
+
+  return new Response(finalResponse, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  });
 }
