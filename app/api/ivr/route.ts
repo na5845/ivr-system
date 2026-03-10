@@ -12,38 +12,26 @@ export async function GET(request: Request) {
   const currentStepOrder = parseInt(searchParams.get('next_step') || '1');
   const lastAnswer = searchParams.get('ApiEnter');
 
-  // 1. ניקוי אגרסיבי של ה-ID (הלוגים הראו שזה עדיין נדבק)
+  // ניקוי ה-ID
   if (campaignId && campaignId.includes('?')) {
     campaignId = campaignId.split('?')[0];
   }
-
-  console.log(`--- IVR Request: Phone: ${phone}, Campaign: ${campaignId}, Step: ${currentStepOrder} ---`);
 
   if (!phone || !campaignId) {
     return new Response('hangup=yes', { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   }
 
-  // 2. שמירת התשובה ב-Supabase (אם הגיעה כזו)
+  // 1. שמירת תשובה
   if (lastAnswer && currentStepOrder > 1) {
-    const { data: prevStep } = await supabase
-      .from('campaign_steps')
-      .select('data_key')
-      .eq('campaign_id', campaignId)
-      .eq('step_order', currentStepOrder - 1)
-      .single();
-
-    if (prevStep?.data_key) {
-      await supabase.rpc('update_lead_data', {
-        p_phone: phone,
-        p_campaign_id: campaignId,
-        p_key: prevStep.data_key,
-        p_value: lastAnswer
-      });
-      console.log(`Saved ${prevStep.data_key}: ${lastAnswer}`);
-    }
+    await supabase.rpc('update_lead_data', {
+      p_phone: phone,
+      p_campaign_id: campaignId,
+      p_key: 'step_' + (currentStepOrder - 1),
+      p_value: lastAnswer
+    });
   }
 
-  // 3. שליפת השלב הנוכחי
+  // 2. שליפת השלב
   const { data: step, error } = await supabase
     .from('campaign_steps')
     .select('*')
@@ -52,25 +40,24 @@ export async function GET(request: Request) {
     .single();
 
   if (error || !step) {
-    // אם אין יותר שלבים - הודעת סיום בעברית נקייה
-    return new Response('id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה&hangup=yes', {
+    return new Response('id_list_message=t-תודה רבה ולהתראות\nhangup=yes', {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 4. יצירת התגובה לימות המשיח (התיקון הקריטי כאן)
+  // 3. בניית התגובה עם ירידת שורה (\n) בין הפקודות
   let finalResponse = '';
 
   if (step.step_type === 'play') {
-    // "טריק" המעבר: אנחנו משתמשים ב-read עם המתנה של אפס זמן כדי לעבור לשלב הבא מיד
-    finalResponse = `id_list_message=${step.message_file}&read=t-wait=no,1,1,1,1,#,no&campaign_id=${campaignId}&next_step=${currentStepOrder + 1}`;
+    // משמיע קובץ ואז עובר מיד לשלב הבא (באמצעות read ריק של שניה)
+    finalResponse = `id_list_message=${step.message_file}\nread=t-none=no,1,1,1,1,#,no&campaign_id=${campaignId}&next_step=${currentStepOrder + 1}`;
   } 
   else if (step.step_type === 'read_digits') {
-    // קבלת נתונים: ימות המשיח יחזרו אלינו עם הערך ב-ApiEnter
+    // השמעת קובץ והמתנה להקשה
     finalResponse = `read=${step.message_file}=no,1,1,1,7,#,yes&campaign_id=${campaignId}&next_step=${currentStepOrder + 1}`;
   }
 
-  console.log('Final Response:', finalResponse);
+  console.log('Final Response Sent:\n', finalResponse);
 
   return new Response(finalResponse, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
