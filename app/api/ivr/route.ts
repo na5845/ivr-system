@@ -11,10 +11,10 @@ export async function GET(request: Request) {
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Incoming Request | Phone: ${phone} | Answer: ${lastAnswer}`);
+  console.log(`>>> Incoming | Phone: ${phone} | Answer: ${lastAnswer}`);
 
-  // 1. שמירת הנתונים לפי מה שחסר ב-DB
-  if (lastAnswer && lastAnswer !== 'null') {
+  // 1. שמירת נתונים (State-based)
+  if (lastAnswer && lastAnswer !== 'null' && lastAnswer !== '') {
     const { data: lead } = await supabase
       .from('leads')
       .select('data')
@@ -31,10 +31,10 @@ export async function GET(request: Request) {
       p_key: keyToSave,
       p_value: lastAnswer
     });
-    console.log(`>>> DB Updated: ${keyToSave} = ${lastAnswer}`);
+    console.log(`>>> Saved: ${keyToSave} = ${lastAnswer}`);
   }
 
-  // 2. בדיקה מה השאלה הבאה שצריך לשאול
+  // 2. בדיקת השלב הבא
   const { data: checkLead } = await supabase
     .from('leads')
     .select('data')
@@ -43,27 +43,24 @@ export async function GET(request: Request) {
     .single();
 
   const leadData = checkLead?.data || {};
-  let question = "";
-
-  if (!leadData.map_type) {
-    question = "t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2";
-  } else if (!leadData.map_size) {
-    question = "t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3";
-  }
-
-  // 3. בניית התגובה - ירידת שורה נקייה בלבד בין הפקודות
+  
+  // 3. בניית התגובה בצורה הדוקה
   let responseText = "";
-  if (question) {
-    // פקודה 1: השמעת השאלה | פקודה 2: המתנה להקשה (על טקסט קצר כדי שלא יישבר)
-    responseText = `id_list_message=${question}\nread=t- . =no,1,1,10,digits,no,no`;
+  if (!leadData.map_type) {
+    responseText = "id_list_message=t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2\nread=t-.=no,1,1,10,digits,no,no";
+  } else if (!leadData.map_size) {
+    responseText = "id_list_message=t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3\nread=t-.=no,1,1,10,digits,no,no";
   } else {
-    responseText = `id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה\nhangup=yes`;
+    responseText = "id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה\nhangup=yes";
   }
 
-  console.log(">>> Final Clean Response:\n", responseText);
+  // הדפסה ללוג בצורה שתראה לנו אם יש רווח בהתחלה (נשתמש בקידומת צמודה)
+  console.log(`>>> RESPONSE_START>${responseText}<RESPONSE_END`);
 
-  // החזרה של הטקסט ללא שום רווחים מיותרים בהתחלה או בסוף
-  return new Response(responseText.trim(), {
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' }
+  return new Response(responseText, {
+    headers: { 
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-cache'
+    }
   });
 }
