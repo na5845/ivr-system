@@ -12,9 +12,9 @@ export async function GET(request: Request) {
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Connection: Step ${currentStep}, Answer: ${lastAnswer}`);
+  console.log(`>>> Step ${currentStep} | Answer: ${lastAnswer}`);
 
-  // 1. שמירת תשובה משלב קודם
+  // 1. שמירת תשובה (אם קיימת)
   if (lastAnswer && currentStep > 1) {
     const { data: prevStep } = await supabase
       .from('campaign_steps')
@@ -33,7 +33,7 @@ export async function GET(request: Request) {
     }
   }
 
-  // 2. שליפת השלב הנוכחי
+  // 2. שליפת השלב
   const { data: step, error } = await supabase
     .from('campaign_steps')
     .select('*')
@@ -42,25 +42,23 @@ export async function GET(request: Request) {
     .single();
 
   if (error || !step) {
-    return new Response('id_list_message=t-תודה רבה הבחירות שלך נשמרו\nhangup=yes', {
+    return new Response('id_list_message=t-תודה רבה הבחירות נשמרו\nhangup=yes', {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 3. הטיפול בטקסט - הפיכת רווחים ל-%20 (השיטה התקנית של ימות המשיח)
-  let msgText = step.message_file;
-  if (!msgText.startsWith('t-') && !/^\d+$/.test(msgText)) msgText = 't-' + msgText;
-  
-  // הסרת סימני פיסוק והחלפת רווחים ב-%20
-  const cleanMsg = msgText.replace(/[.,]/g, '').split(' ').join('%20');
+  // 3. בניית התגובה - שים לב: אין שורה ריקה לפני id_list_message
+  let msg = step.message_file;
+  if (!msg.startsWith('t-') && !/^\d+$/.test(msg)) msg = 't-' + msg;
 
-  // 4. פקודת ה-read בפורמט "סלע"
-  // חובה להשאיר את ה-&next_step בסוף
-  const response = `read=${cleanMsg}=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
+  // הפקודה id_list_message משמיעה את הטקסט
+  // הפקודה read מחכה להקשה אחת (1,1) במשך 10 שניות
+  const response = `id_list_message=${msg}\nread=t-.=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
   
-  console.log('>>> Sending Response:', response);
+  // אנחנו מדפיסים ללוג בלי ירידת שורה מקדימה כדי שתוכל לראות שזה נקי
+  console.log('>>> Final Response Sending...');
 
-  return new Response(response, {
+  return new Response(response.trim(), {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
   });
 }
