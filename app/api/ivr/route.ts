@@ -7,16 +7,15 @@ export async function GET(request: Request) {
   const phone = searchParams.get('ApiPhone');
   let campaignId = searchParams.get('campaign_id');
   const currentStep = parseInt(searchParams.get('next_step') || '1');
-  const lastAnswer = searchParams.get('ApiEnter'); // התשובה שהמשתמש הקיש כרגע
+  const lastAnswer = searchParams.get('ApiEnter');
 
-  // 1. ניקוי ID
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Processing Step ${currentStep} for phone ${phone}`);
+  console.log(`>>> Processing Step ${currentStep} for ${phone}`);
 
-  // 2. שמירת התשובה מהשלב הקודם (אם יש כזו)
-  if (lastAnswer) {
+  // 1. שמירת תשובה משלב קודם
+  if (lastAnswer && currentStep > 1) {
     const { data: prevStep } = await supabase
       .from('campaign_steps')
       .select('data_key')
@@ -35,7 +34,7 @@ export async function GET(request: Request) {
     }
   }
 
-  // 3. שליפת השלב הבא להשמעה
+  // 2. שליפת השלב הנוכחי
   const { data: step, error } = await supabase
     .from('campaign_steps')
     .select('*')
@@ -43,18 +42,20 @@ export async function GET(request: Request) {
     .eq('step_order', currentStep)
     .single();
 
-  // אם אין יותר שלבים - הודעת סיום וניתוק
   if (error || !step) {
-    return new Response('id_list_message=t-תודה רבה, הבחירות שלך נשמרו במערכת\nhangup=yes', {
+    return new Response('id_list_message=t-תודה רבה בחירתך נשמרה\nhangup=yes', {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 4. בניית פקודת ה-Read (השמעת טקסט והמתנה להקשה)
-  // הפקודה אומרת: השמע את message_file, חכה להקשה אחת (1,1), ואז תחזור לכאן עם next_step הבא
-  const finalResponse = `read=${step.message_file}=no,1,1,1,10,#,no&campaign_id=${campaignId}&next_step=${currentStep + 1}`;
+  // 3. בניית התגובה בשתי שורות נפרדות (למניעת שגיאות)
+  // שורה 1: השמעת ההודעה
+  // שורה 2: המתנה להקשה (ה-t-. הוא צליל שקט קצרצר)
+  const cleanMessage = step.message_file.replace(/[.,]/g, ''); // הסרת נקודות ופסיקים מהטקסט
   
-  console.log('>>> Final Response:', finalResponse);
+  const finalResponse = `id_list_message=${cleanMessage}\nread=t-.=no,1,1,10,Digits,yes,no&campaign_id=${campaignId}&next_step=${currentStep + 1}`;
+  
+  console.log('>>> Sending Response:\n', finalResponse);
 
   return new Response(finalResponse, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
