@@ -42,21 +42,25 @@ export async function GET(request: Request) {
     .single();
 
   if (error || !step) {
-    return new Response('id_list_message=t-תודה רבה הבחירות שלך נשמרו בהצלחה\nhangup=yes', {
+    return new Response('id_list_message=t-תודה רבה הבחירות שלך נשמרו\nhangup=yes', {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 3. בניית התגובה בשתי שורות נפרדות (השיטה הכי יציבה)
-  const messageText = step.message_file.startsWith('t-') ? step.message_file : `t-${step.message_file}`;
+  // 3. הטיפול בטקסט - הפיכת רווחים ל-%20 (השיטה התקנית של ימות המשיח)
+  let msgText = step.message_file;
+  if (!msgText.startsWith('t-') && !/^\d+$/.test(msgText)) msgText = 't-' + msgText;
   
-  // שורה 1: משמיע את הטקסט
-  // שורה 2: מחכה להקשה (על נקודה . שזה שקט) ושולח את התוצאה לשלב הבא
-  const finalResponse = `id_list_message=${messageText}\nread=t-.=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
-  
-  console.log('>>> Sending Response:\n', finalResponse);
+  // הסרת סימני פיסוק והחלפת רווחים ב-%20
+  const cleanMsg = msgText.replace(/[.,]/g, '').split(' ').join('%20');
 
-  return new Response(finalResponse, {
+  // 4. פקודת ה-read בפורמט "סלע"
+  // חובה להשאיר את ה-&next_step בסוף
+  const response = `read=${cleanMsg}=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
+  
+  console.log('>>> Sending Response:', response);
+
+  return new Response(response, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
   });
 }
