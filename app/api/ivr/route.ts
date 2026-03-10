@@ -9,10 +9,11 @@ export async function GET(request: Request) {
   const currentStep = parseInt(searchParams.get('next_step') || '1');
   const lastAnswer = searchParams.get('ApiEnter');
 
+  // ניקוי campaignId
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Connection: Step ${currentStep}, Answer: ${lastAnswer}`);
+  console.log(`>>> Step ${currentStep} | Answer: ${lastAnswer}`);
 
   // 1. שמירת תשובה משלב קודם
   if (lastAnswer && currentStep > 1) {
@@ -30,7 +31,7 @@ export async function GET(request: Request) {
         p_key: prevStep.data_key,
         p_value: lastAnswer
       });
-      console.log(`>>> Saved ${prevStep.data_key}: ${lastAnswer}`);
+      console.log(`>>> DB Updated: ${prevStep.data_key} = ${lastAnswer}`);
     }
   }
 
@@ -43,24 +44,25 @@ export async function GET(request: Request) {
     .single();
 
   if (error || !step) {
-    return new Response('id_list_message=t-תודה+רבה+הבחירות+נשמרו\nhangup=yes', {
+    return new Response('id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה\nhangup=yes', {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 3. הכנת הטקסט: הוספת t- והחלפת רווחים ב-+
+  // 3. הכנת הטקסט - הסרת נקודות ופסיקים שעלולים לשבור את הפקודה!
   let msg = step.message_file;
   if (!msg.startsWith('t-') && !/^\d+$/.test(msg)) msg = 't-' + msg;
-  const cleanMsg = msg.replace(/\s+/g, '+').replace(/[.,]/g, '');
-
-  // 4. התגובה המנצחת בשתי שורות:
-  // שורה 1: משמיעה את השאלה
-  // שורה 2: מחכה להקשה (על "נקודה" - שזה שקט) ושולחת את התשובה לצעד הבא
-  const finalResponse = `id_list_message=${cleanMsg}\nread=t-.=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
   
-  console.log('>>> Final Response Sent:\n', finalResponse);
+  // הסרת כל סימן שאינו אות או מספר כדי שהפקודה לא תישבר
+  const cleanMsg = msg.replace(/[.,]/g, '');
 
-  return new Response(finalResponse, {
+  // 4. פקודת ה-read הכי פשוטה בשורה אחת
+  // חשוב: לא שמים campaign_id בתגובה כי הוא כבר נמצא ב-URL המקורי של השלוחה
+  const response = `read=${cleanMsg}=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
+  
+  console.log('>>> Sending Clean Response:', response);
+
+  return new Response(response, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
   });
 }
