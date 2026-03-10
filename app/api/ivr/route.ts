@@ -1,22 +1,19 @@
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
-// יצירת החיבור למסד הנתונים
 const supabase = createClient(
   process.env.SUPABASE_URL!,
   process.env.SUPABASE_ANON_KEY!
 );
 
 export async function GET(request: Request) {
-  // חילוץ הפרמטרים מהבקשה שימות המשיח שולחים אלינו
   const { searchParams } = new URL(request.url);
 
   const phone = searchParams.get('ApiPhone');
-  const campaignId = searchParams.get('campaign_id'); // פרמטר שאנחנו נוסיף בהגדרות השלוחה בימות
+  const campaignId = searchParams.get('campaign_id'); 
   const currentStepOrder = parseInt(searchParams.get('next_step') || '1');
-  const lastAnswer = searchParams.get('ApiEnter'); // מה שהמשתמש הקיש כרגע בטלפון
+  const lastAnswer = searchParams.get('ApiEnter'); 
 
-  // אם חסרים נתונים קריטיים כמו מספר טלפון או מזהה קמפיין, ננתק את השיחה
   if (!phone || !campaignId) {
     return new NextResponse('hangup=yes');
   }
@@ -40,7 +37,7 @@ export async function GET(request: Request) {
     }
   }
 
-  // 2. שליפת השלב הנוכחי כדי לדעת מה להשמיע עכשיו
+  // 2. שליפת השלב הנוכחי
   const { data: step, error } = await supabase
     .from('campaign_steps')
     .select('*')
@@ -48,22 +45,21 @@ export async function GET(request: Request) {
     .eq('step_order', currentStepOrder)
     .single();
 
-  // אם אין יותר שלבים (סיימנו את העץ), נגיד תודה וננתק
+  // אם אין יותר שלבים, ננתק את השיחה
   if (error || !step) {
-    return new NextResponse('id_list_message=t-thank_you&hangup=yes');
+    return new NextResponse('hangup=yes');
   }
 
-  // 3. בניית התגובה לימות המשיח לפי סוג השלב שמוגדר במסד הנתונים
+  // 3. בניית התגובה לימות המשיח בפקודות תקינות!
   let response = '';
   
   if (step.step_type === 'play') {
-    // להשמיע קובץ ולהמשיך מיד לשלב הבא בלי להמתין להקשה
-    response = `play=t-${step.message_file}&go_to_query=next_step=${currentStepOrder + 1}`;
+    // הפקודה הנכונה להשמעת קובץ רגיל וניתוק (כי זה שלב יחיד בטסט)
+    response = `id_list_message=${step.message_file}&hangup=yes`;
   } else if (step.step_type === 'read_digits') {
-    // להשמיע קובץ ולהמתין שהמשתמש יקיש נתונים (המערכת תחזור אלינו שוב עם התוצאה)
-    response = `read=t-${step.message_file}=no,1,1,1,7,#,yes&next_step=${currentStepOrder + 1}`;
+    // הפקודה לבקשת הקשה - הורדנו את ה t- כדי שישמיע קובץ רגיל
+    response = `read=${step.message_file}=no,1,1,1,7,#,yes&next_step=${currentStepOrder + 1}`;
   }
 
-  // מחזירים את הפקודה למערכת הטלפונית
   return new NextResponse(response);
 }
