@@ -7,14 +7,15 @@ export async function GET(request: Request) {
   const phone = searchParams.get('ApiPhone');
   let campaignId = searchParams.get('campaign_id');
   const currentStep = parseInt(searchParams.get('next_step') || '1');
-  const lastAnswer = searchParams.get('ApiEnter');
+  const lastAnswer = searchParams.get('ApiEnter'); // התשובה שימות המשיח שולחים
 
+  // 1. ניקוי campaignId
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Step ${currentStep} | Phone ${phone} | Answer ${lastAnswer}`);
+  console.log(`>>> Incoming: Step=${currentStep}, Answer=${lastAnswer}`);
 
-  // 1. שמירת תשובה (אם קיימת)
+  // 2. שמירת תשובה (אם הגיעה כזו מהשלב הקודם)
   if (lastAnswer && currentStep > 1) {
     const { data: prevStep } = await supabase
       .from('campaign_steps')
@@ -30,10 +31,11 @@ export async function GET(request: Request) {
         p_key: prevStep.data_key,
         p_value: lastAnswer
       });
+      console.log(`>>> Saved to DB: ${prevStep.data_key} = ${lastAnswer}`);
     }
   }
 
-  // 2. שליפת השלב
+  // 3. שליפת השלב הבא להקראה
   const { data: step, error } = await supabase
     .from('campaign_steps')
     .select('*')
@@ -42,20 +44,18 @@ export async function GET(request: Request) {
     .single();
 
   if (error || !step) {
-    return new Response('id_list_message=t-תודה רבה הבחירה נשמרה\nhangup=yes', {
+    return new Response('id_list_message=t-תודה רבה הבחירות שלך נשמרו בהצלחה\nhangup=yes', {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 3. הכנת ההודעה להשמעה (הוספת t- אם חסר)
-  let message = step.message_file;
-  if (!message.startsWith('t-') && !/^\d+$/.test(message)) {
-    message = 't-' + message;
-  }
+  // 4. בניית פקודת ה-read בפורמט הברזל של ימות המשיח
+  // פרמטרים: הודעה, חזרה על הודעה(no), מינימום ספרות(1), מקסימום(1), זמן המתנה(10), סוג(digits), אישור ריק(no), אישור סולמית(no)
+  let msg = step.message_file;
+  if (!msg.startsWith('t-') && !/^\d+$/.test(msg)) msg = 't-' + msg;
 
-  // 4. פקודת ה-read בפורמט הכי בסיסי שעובד תמיד
-  // הוספנו תמיכה ב-next_step ו-campaign_id כפרמטרים שיחזרו אלינו
-  const response = `read=${message}=no,1,1,7,Digits,no,no,heb&campaign_id=${campaignId}&next_step=${currentStep + 1}`;
+  // אנחנו משתמשים בפורמט הכי נקי: 7 פרמטרים מופרדים בפסיקים
+  const response = `read=${msg}=no,1,1,10,digits,no,no&campaign_id=${campaignId}&next_step=${currentStep + 1}`;
   
   console.log('>>> Final Response:', response);
 
