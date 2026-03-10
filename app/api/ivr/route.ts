@@ -9,13 +9,13 @@ export async function GET(request: Request) {
   const currentStep = parseInt(searchParams.get('next_step') || '1');
   const lastAnswer = searchParams.get('ApiEnter');
 
-  // 1. ניקוי campaignId
+  // ניקוי ID
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Step ${currentStep} | Answer: ${lastAnswer}`);
+  console.log(`>>> Connection: Step ${currentStep}, Answer: ${lastAnswer}`);
 
-  // 2. שמירת תשובה (אם קיימת)
+  // 1. שמירת תשובה משלב קודם
   if (lastAnswer && currentStep > 1) {
     const { data: prevStep } = await supabase
       .from('campaign_steps')
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     }
   }
 
-  // 3. שליפת השלב
+  // 2. שליפת השלב הנוכחי
   const { data: step, error } = await supabase
     .from('campaign_steps')
     .select('*')
@@ -43,21 +43,25 @@ export async function GET(request: Request) {
     .single();
 
   if (error || !step) {
-    return new Response('id_list_message=t-תודה+רבה+הבחירות+נשמרו\nhangup=yes', {
+    // הודעת סיום בקידוד URL
+    const goodbye = encodeURIComponent('t-תודה רבה הבחירות שלך נשמרו בהצלחה');
+    return new Response(`id_list_message=${goodbye}\nhangup=yes`, {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 4. הכנת ההודעה: החלפת רווחים ב-+ והוספת t-
-  let msg = step.message_file;
-  if (!msg.startsWith('t-') && !/^\d+$/.test(msg)) msg = 't-' + msg;
-  const encodedMsg = msg.replace(/\s+/g, '+'); // מחליף כל רווח ב-+
-
-  // 5. פקודת ה-read בפורמט "הבטון"
-  // הודעה=no(בלי חזרה), 1(מינימום), 1(מקסימום), 10(שניות), digits(סוג)
-  const response = `read=${encodedMsg}=no,1,1,10,digits,no,no&campaign_id=${campaignId}&next_step=${currentStep + 1}`;
+  // 3. הכנת ההודעה בפורמט URL Encoded (לפי המדריך ב-F2)
+  let msgText = step.message_file;
+  if (!msgText.startsWith('t-') && !/^\d+$/.test(msgText)) msgText = 't-' + msgText;
   
-  console.log('>>> Final Response:', response);
+  // הקידוד החשוב ביותר:
+  const encodedMsg = encodeURIComponent(msgText);
+
+  // 4. פקודת ה-read בפורמט המדויק
+  // נשתמש ב-Digits (D גדולה) וב-7 פרמטרים בלבד
+  const response = `read=${encodedMsg}=no,1,1,10,Digits,no,no&next_step=${currentStep + 1}`;
+  
+  console.log('>>> Sending Response:', response);
 
   return new Response(response, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
