@@ -9,7 +9,6 @@ export async function GET(request: Request) {
   const currentStep = parseInt(searchParams.get('next_step') || '1');
   const lastAnswer = searchParams.get('ApiEnter');
 
-  // ניקוי ID
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
@@ -31,6 +30,7 @@ export async function GET(request: Request) {
         p_key: prevStep.data_key,
         p_value: lastAnswer
       });
+      console.log(`>>> Saved ${prevStep.data_key}: ${lastAnswer}`);
     }
   }
 
@@ -43,27 +43,24 @@ export async function GET(request: Request) {
     .single();
 
   if (error || !step) {
-    // הודעת סיום בקידוד URL
-    const goodbye = encodeURIComponent('t-תודה רבה הבחירות שלך נשמרו בהצלחה');
-    return new Response(`id_list_message=${goodbye}\nhangup=yes`, {
+    return new Response('id_list_message=t-תודה+רבה+הבחירות+נשמרו\nhangup=yes', {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 3. הכנת ההודעה בפורמט URL Encoded (לפי המדריך ב-F2)
-  let msgText = step.message_file;
-  if (!msgText.startsWith('t-') && !/^\d+$/.test(msgText)) msgText = 't-' + msgText;
-  
-  // הקידוד החשוב ביותר:
-  const encodedMsg = encodeURIComponent(msgText);
+  // 3. הכנת הטקסט: הוספת t- והחלפת רווחים ב-+
+  let msg = step.message_file;
+  if (!msg.startsWith('t-') && !/^\d+$/.test(msg)) msg = 't-' + msg;
+  const cleanMsg = msg.replace(/\s+/g, '+').replace(/[.,]/g, '');
 
-  // 4. פקודת ה-read בפורמט המדויק
-  // נשתמש ב-Digits (D גדולה) וב-7 פרמטרים בלבד
-  const response = `read=${encodedMsg}=no,1,1,10,Digits,no,no&next_step=${currentStep + 1}`;
+  // 4. התגובה המנצחת בשתי שורות:
+  // שורה 1: משמיעה את השאלה
+  // שורה 2: מחכה להקשה (על "נקודה" - שזה שקט) ושולחת את התשובה לצעד הבא
+  const finalResponse = `id_list_message=${cleanMsg}\nread=t-.=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
   
-  console.log('>>> Sending Response:', response);
+  console.log('>>> Final Response Sent:\n', finalResponse);
 
-  return new Response(response, {
+  return new Response(finalResponse, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
   });
 }
