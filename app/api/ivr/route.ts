@@ -9,13 +9,12 @@ export async function GET(request: Request) {
   const currentStep = parseInt(searchParams.get('next_step') || '1');
   const lastAnswer = searchParams.get('ApiEnter');
 
-  // ניקוי campaignId
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
   console.log(`>>> Step ${currentStep} | Answer: ${lastAnswer}`);
 
-  // 1. שמירת תשובה משלב קודם
+  // 1. שמירת תשובה (אם קיימת)
   if (lastAnswer && currentStep > 1) {
     const { data: prevStep } = await supabase
       .from('campaign_steps')
@@ -31,11 +30,10 @@ export async function GET(request: Request) {
         p_key: prevStep.data_key,
         p_value: lastAnswer
       });
-      console.log(`>>> DB Updated: ${prevStep.data_key} = ${lastAnswer}`);
     }
   }
 
-  // 2. שליפת השלב הנוכחי
+  // 2. שליפת השלב הבא
   const { data: step, error } = await supabase
     .from('campaign_steps')
     .select('*')
@@ -44,23 +42,22 @@ export async function GET(request: Request) {
     .single();
 
   if (error || !step) {
-    return new Response('id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה\nhangup=yes', {
+    return new Response('id_list_message=t-תודה_רבה_הזמנתכם_נקלטה\nhangup=yes', {
       headers: { 'Content-Type': 'text/plain; charset=utf-8' }
     });
   }
 
-  // 3. הכנת הטקסט - הסרת נקודות ופסיקים שעלולים לשבור את הפקודה!
+  // 3. הטריק הקריטי: החלפת רווחים בקו תחתי (_)
   let msg = step.message_file;
   if (!msg.startsWith('t-') && !/^\d+$/.test(msg)) msg = 't-' + msg;
   
-  // הסרת כל סימן שאינו אות או מספר כדי שהפקודה לא תישבר
-  const cleanMsg = msg.replace(/[.,]/g, '');
+  // מחליף את כל הרווחים בקו תחתי כדי שהפקודה לא תישבר
+  const underscoredMsg = msg.replace(/\s+/g, '_');
 
-  // 4. פקודת ה-read הכי פשוטה בשורה אחת
-  // חשוב: לא שמים campaign_id בתגובה כי הוא כבר נמצא ב-URL המקורי של השלוחה
-  const response = `read=${cleanMsg}=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
+  // 4. פקודת ה-read בפורמט הכי יציב (בדיוק 7 פרמטרים)
+  const response = `read=${underscoredMsg}=no,1,1,10,digits,no,no&next_step=${currentStep + 1}`;
   
-  console.log('>>> Sending Clean Response:', response);
+  console.log('>>> Final Response:', response);
 
   return new Response(response, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' }
