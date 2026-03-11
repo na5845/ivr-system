@@ -6,58 +6,44 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const phone = searchParams.get('ApiPhone');
   let campaignId = searchParams.get('campaign_id');
-  const lastAnswer = searchParams.get('ApiEnter'); // כאן אנחנו תופסים את המשתנה ApiEnter
+  const lastAnswer = searchParams.get('ApiEnter');
 
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Phone: ${phone} | ApiEnter: ${lastAnswer}`);
-
-  // 1. שמירת ההקשה
-  if (lastAnswer && lastAnswer !== 'null' && lastAnswer !== '') {
-    const { data: lead } = await supabase
-      .from('leads')
-      .select('data')
-      .eq('phone', phone)
-      .eq('campaign_id', campaignId)
-      .single();
-
+  // 1. שמירת התשובה הקודמת (אם קיימת)
+  if (lastAnswer && lastAnswer !== 'null') {
+    const { data: lead } = await supabase.from('leads').select('data').eq('phone', phone).eq('campaign_id', campaignId).single();
+    const { data: steps } = await supabase.from('campaign_steps').select('data_key').eq('campaign_id', campaignId).order('step_order', { ascending: true });
+    
+    // מציאת השדה הבא שצריך למלא
     const currentData = lead?.data || {};
-    let keyToSave = !currentData.map_type ? 'map_type' : 'map_size';
+    const nextStepToSave = steps?.find(s => !currentData[s.data_key]);
 
-    await supabase.rpc('update_lead_data', {
-      p_phone: phone,
-      p_campaign_id: campaignId,
-      p_key: keyToSave,
-      p_value: lastAnswer
-    });
-    console.log(`>>> Saved: ${keyToSave} = ${lastAnswer}`);
+    if (nextStepToSave) {
+      await supabase.rpc('update_lead_data', {
+        p_phone: phone, p_campaign_id: campaignId, p_key: nextStepToSave.data_key, p_value: lastAnswer
+      });
+    }
   }
 
-  // 2. בדיקה מה השלב הבא
-  const { data: checkLead } = await supabase
-    .from('leads')
-    .select('data')
-    .eq('phone', phone)
-    .eq('campaign_id', campaignId)
-    .single();
+  // 2. שליפת השאלה הבאה מה-DB
+  const { data: leadAfter } = await supabase.from('leads').select('data').eq('phone', phone).eq('campaign_id', campaignId).single();
+  const { data: allSteps } = await supabase.from('campaign_steps').select('*').eq('campaign_id', campaignId).order('step_order', { ascending: true });
 
-  const leadData = checkLead?.data || {};
+  const currentData = leadAfter?.data || {};
+  const currentQuestion = allSteps?.find(s => !currentData[s.data_key]);
+
+  // 3. בניית תגובה לימות המשיח
+  if (!currentQuestion) {
+    return new Response('id_list_message=t-תודה רבה ההזמנה הושלמה&hangup=yes', { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  }
+
+  const prefix = currentQuestion.is_audio ? '' : 't-';
+  const msg = `${prefix}${currentQuestion.message_content}`;
   
-  // 3. פקודת ה-read המושלמת לפי המדריך של אליהו:
-  // הוספנו את המילה 'ApiEnter' בתור הפרמטר הראשון!
-  let responseText = "";
-  if (!leadData.map_type) {
-    responseText = "read=t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2=ApiEnter,no,1,1,10,Digits,no";
-  } else if (!leadData.map_size) {
-    responseText = "read=t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3=ApiEnter,no,1,1,10,Digits,no";
-  } else {
-    responseText = "id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה&hangup=yes";
-  }
+  // פקודת ה-read המדויקת עם הפרמטרים מה-DB
+  const response = `read=${msg}=ApiEnter,no,${currentQuestion.min_digits},${currentQuestion.max_digits},10,Digits,no`;
 
-  console.log(`>>> Sending: ${responseText}`);
-
-  return new Response(responseText, {
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' }
-  });
+  return new Response(response, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
