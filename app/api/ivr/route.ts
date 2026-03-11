@@ -6,92 +6,89 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const phone = searchParams.get('ApiPhone');
   let campaignId = searchParams.get('campaign_id');
-  const lastAnswer = searchParams.get('ApiEnter');
 
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  // 1. בדיקה אם המשתמש כבר קיים וסיים את השאלון
-  const { data: existingLead } = await supabase
-    .from('leads')
-    .select('data, status')
-    .eq('phone', phone)
-    .eq('campaign_id', campaignId)
-    .single();
-
+  // 1. שליפת השלבים והליד הקיים
   const { data: allSteps } = await supabase
     .from('campaign_steps')
     .select('*')
     .eq('campaign_id', campaignId)
     .order('step_order', { ascending: true });
 
-  const currentData = existingLead?.data || {};
-  
-  // אם המשתמש כבר ענה על הכל (status יכול להיות 'completed')
-  if (existingLead?.status === 'completed') {
+  const { data: lead } = await supabase
+    .from('leads')
+    .select('*')
+    .eq('phone', phone)
+    .eq('campaign_id', campaignId)
+    .single();
+
+  // 2. בדיקה אם המשתמש כבר סיים בעבר
+  if (lead?.status === 'completed') {
     return new Response(`id_list_message=t-שלום רב המערכת כבר קיבלה את הפרטים שלך תודה ושלום&hangup=yes`, { 
       headers: { 'Content-Type': 'text/plain; charset=utf-8' } 
     });
   }
 
-  let confirmationText = ""; 
+  // 3. איסוף תשובות חדשות מה-URL (אנחנו נחפש משתנים בשם ans_1, ans_2 וכו')
+  const currentData = lead?.data || {};
+  let newlyAnsweredStepKey = null;
+  let lastValueReceived = null;
 
-  // 2. שמירת התשובה האחרונה
-  if (lastAnswer && lastAnswer !== 'null' && lastAnswer !== '') {
-    const answeredStep = allSteps?.find(s => !currentData[s.data_key]);
-
-    if (answeredStep) {
-      const newData = { ...currentData, [answeredStep.data_key]: lastAnswer };
-      
-      // בדיקה אם זה הצעד האחרון
-      const isLastStep = allSteps?.every(s => newData[s.data_key]);
-      
-      await supabase.from('leads').upsert({
-        phone,
-        campaign_id: campaignId,
-        data: newData,
-        status: isLastStep ? 'completed' : 'in_progress',
-        updated_at: new Date().toISOString()
-      }, { onConflict: 'phone, campaign_id' });
-
-      if (answeredStep.question_type === 'choice' && answeredStep.options && answeredStep.options[lastAnswer]) {
-        confirmationText = `בחרת ${answeredStep.options[lastAnswer]} `; 
-      }
-      
-      // עדכון הנתונים המקומיים להמשך הלוגיקה
-      currentData[answeredStep.data_key] = lastAnswer;
+  allSteps?.forEach(step => {
+    const answerFromUrl = searchParams.get(`ans_${step.step_order}`);
+    if (answerFromUrl && !currentData[step.data_key]) {
+      currentData[step.data_key] = answerFromUrl;
+      newlyAnsweredStepKey = step.data_key;
+      lastValueReceived = answerFromUrl;
     }
+  });
+
+  // 4. אם יש תשובות חדשות - שמירה למסד הנתונים
+  if (newlyAnsweredStepKey) {
+    const isLastStep = allSteps?.every(s => currentData[s.data_key]);
+    
+    await supabase.from('leads').upsert({
+      phone,
+      campaign_id: campaignId,
+      data: currentData,
+      status: isLastStep ? 'completed' : 'in_progress',
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'phone, campaign_id' });
   }
 
-  // 3. מציאת השאלה הבאה
-  const currentQuestion = allSteps?.find(s => !currentData[s.data_key]);
+  // 5. מציאת השאלה הבאה שטרם נענתה
+  const nextQuestion = allSteps?.find(s => !currentData[s.data_key]);
 
-  // הודעת סיום אם אין יותר שאלות
-  if (!currentQuestion) {
-    const finalMsg = confirmationText ? `t-${confirmationText} תודה רבה ההזמנה הושלמה בהצלחה` : `t-תודה רבה ההזמנה הושלמה בהצלחה`;
-    return new Response(`id_list_message=${finalMsg}&hangup=yes`, { 
+  // 6. בניית התגובה לימות המשיח
+  if (!nextQuestion) {
+    return new Response(`id_list_message=t-תודה רבה ההזמנה הושלמה בהצלחה&hangup=yes`, { 
       headers: { 'Content-Type': 'text/plain; charset=utf-8' } 
     });
   }
 
-  // 4. בניית ההודעה עם הפסקה (3 שניות זה נצח בטלפון, נשים 1.5 שניות שזה מרגיש טבעי)
-  const cleanQuestionContent = currentQuestion.message_content.replace(/[.,]/g, '');
-  
-  // הוספת הפסקה של שניה וחצי (סמל ה-comma פועל ב-TTS של ימות כהפסקה קלה, או שימוש ב-timeout)
-  // ב-read אפשר להוסיף שקט לפני
-  let msg = "";
-  if (currentQuestion.is_audio) {
-    msg = confirmationText ? `t-${confirmationText}.s-1.${currentQuestion.message_content}` : `${currentQuestion.message_content}`;
-  } else {
-    // הוספת s-1 נותן שנייה של שקט לפני השאלה הבאה
-    msg = confirmationText ? `t-${confirmationText}.s-1.t-${cleanQuestionContent}` : `t-${cleanQuestionContent}`;
+  // הכנת טקסט אישור (אם התשובה האחרונה הייתה בחירה)
+  let confirmationPrefix = "";
+  if (newlyAnsweredStepKey) {
+    const lastStepObj = allSteps?.find(s => s.data_key === newlyAnsweredStepKey);
+    if (lastStepObj?.question_type === 'choice' && lastStepObj.options && lastStepObj.options[lastValueReceived]) {
+      confirmationPrefix = `בחרת ${lastStepObj.options[lastValueReceived]}. `;
+    }
   }
 
-  // 5. תיקון קליטת ספרות (ת"ז)
-  // הוספת 'yes' בפרמטר הרביעי של read (המתנה לאישור) או הגדרת סוג הקלט
-  // נשתמש בפורמט: read=msg=ApiEnter,yes,min,max,timeout,Digits
-  const response = `read=${msg}=ApiEnter,yes,${currentQuestion.min_digits},${currentQuestion.max_digits},10,Digits,no`;
+  const cleanMsg = nextQuestion.message_content.replace(/[.,]/g, '');
   
+  // בניית הפקודה: 
+  // שימוש ב-ans_{order} כמשתנה הייחודי לשאלה זו
+  // הוספת s-1 להפסקה של שניה
+  // שימוש ב-yes בפרמטר ה-7 (check_existing) כדי להכריח אותו לשאול גם אם יש ערך
+  const varName = `ans_${nextQuestion.step_order}`;
+  const audioPrefix = nextQuestion.is_audio ? '' : 't-';
+  const fullMsg = confirmationPrefix ? `t-${confirmationPrefix}s-1.${audioPrefix}${cleanMsg}` : `${audioPrefix}${cleanMsg}`;
+
+  const response = `read=${fullMsg}=${varName},no,${nextQuestion.min_digits},${nextQuestion.max_digits},10,Digits,yes`;
+
   return new Response(response, { 
     headers: { 'Content-Type': 'text/plain; charset=utf-8' } 
   });
