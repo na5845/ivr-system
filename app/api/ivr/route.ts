@@ -6,12 +6,10 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const phone = searchParams.get('ApiPhone');
   let campaignId = searchParams.get('campaign_id');
-  const apiEnter = searchParams.get('ApiEnter'); // חזרנו להשתמש במשתנה הראשי!
 
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  // 1. שליפת השלבים והליד הקיים
   const { data: allSteps } = await supabase.from('campaign_steps').select('*').eq('campaign_id', campaignId).order('step_order', { ascending: true });
   const { data: lead } = await supabase.from('leads').select('*').eq('phone', phone).eq('campaign_id', campaignId).single();
 
@@ -21,66 +19,72 @@ export async function GET(request: Request) {
 
   let currentData = lead?.data || {};
   let canceledText = "";
+  let isDataChanged = false;
 
-  // 2. עיבוד התשובה שהתקבלה מהלקוח
-  if (apiEnter && apiEnter !== 'null' && apiEnter !== '') {
-    
-    // האם אנחנו כרגע במצב "המתנה לאישור"?
-    const awaitingStepOrder = currentData['_awaiting_confirm_step'];
-    
-    if (awaitingStepOrder) {
-      // ---- מצב אישור (1 לאישור, 2 לביטול) ----
-      if (apiEnter === '1') {
-        // המשתמש אישר! שומרים את הערך האמיתי
+  // 1. בדיקת אישור (האם אנחנו במצב המתנה לאישור מהקשה קודמת?)
+  const awaitingStepOrder = currentData['_awaiting_confirm_step'];
+  if (awaitingStepOrder) {
+    const confirmVal = searchParams.get(`Confirm_${awaitingStepOrder}`);
+    if (confirmVal) {
+      if (confirmVal === '1') {
+        // אושר!
         const stepObj = allSteps?.find(s => s.step_order === awaitingStepOrder);
         if (stepObj) {
-           currentData[stepObj.data_key] = currentData['_temp_val'];
+          currentData[stepObj.data_key] = currentData['_temp_val'];
         }
-        // מנקים את מצב ההמתנה
-        delete currentData['_awaiting_confirm_step'];
-        delete currentData['_temp_val'];
       } else {
-        // המשתמש ביטל (הקיש 2 או משהו אחר)
-        delete currentData['_awaiting_confirm_step'];
-        delete currentData['_temp_val'];
-        canceledText = "הביטול נקלט "; // נוסיף את זה לתחילת השאלה החוזרת
+        // בוטל! (הקיש משהו אחר מ-1)
+        canceledText = "הביטול נקלט. ";
       }
-    } else {
-      // ---- מצב רגיל (מענה לשאלה) ----
-      const nextStep = allSteps?.find(s => !currentData[s.data_key]);
+      // מנקים את מצב ההמתנה כדי להמשיך הלאה
+      delete currentData['_awaiting_confirm_step'];
+      delete currentData['_temp_val'];
+      isDataChanged = true;
+    }
+  } 
+  // 2. קליטת תשובות רגילות חדשות
+  else {
+    allSteps?.forEach(step => {
+      // אנחנו מחפשים משתנה ייחודי לכל שאלה (Val_1, Val_2 וכו')
+      const val = searchParams.get(`Val_${step.step_order}`);
       
-      if (nextStep) {
-        if (nextStep.question_type === 'choice' && nextStep.options && nextStep.options[apiEnter]) {
-          // זו שאלת בחירה ויש לה תרגום! נכנסים למצב "המתנה לאישור"
-          currentData['_awaiting_confirm_step'] = nextStep.step_order;
-          currentData['_temp_val'] = apiEnter;
+      // אם קיבלנו ערך, והוא עדיין לא שמור אצלנו באופן סופי
+      if (val && !currentData[step.data_key]) {
+        if (step.question_type === 'choice' && step.options && step.options[val]) {
+          // זו שאלת בחירה ויש לה תרגום - עוברים למצב המתנה לאישור
+          currentData['_awaiting_confirm_step'] = step.step_order;
+          currentData['_temp_val'] = val;
+          isDataChanged = true;
         } else {
-          // שאלה רגילה (כמו ת"ז), שומרים ישירות
-          currentData[nextStep.data_key] = apiEnter;
+          // שאלה רגילה (כמו תעודת זהות) - שומרים ישירות
+          currentData[step.data_key] = val;
+          isDataChanged = true;
         }
       }
-    }
+    });
+  }
 
-    // שמירה למסד הנתונים
+  // 3. שמירה למסד נתונים רק אם משהו השתנה
+  if (isDataChanged) {
     const isLast = allSteps?.every(s => currentData[s.data_key] !== undefined) && !currentData['_awaiting_confirm_step'];
     await supabase.from('leads').upsert({
       phone, campaign_id: campaignId, data: currentData, status: isLast ? 'completed' : 'in_progress', updated_at: new Date().toISOString()
     }, { onConflict: 'phone, campaign_id' });
   }
 
-  // 3. החלטה מה לשדר עכשיו ללקוח בטלפון
+  // --- 4. בניית התגובה לימות המשיח ---
 
-  // אם אנחנו ממתינים לאישור עכשיו - משדרים את שאלת האישור!
+  // אם אנחנו עכשיו צריכים לבקש אישור:
   if (currentData['_awaiting_confirm_step']) {
     const stepObj = allSteps?.find(s => s.step_order === currentData['_awaiting_confirm_step']);
     const optionName = stepObj?.options[currentData['_temp_val']];
     
-    // פקודת קריאה לאישור (בלי נקודות כדי לא לשבור את ימות המשיח)
     const confirmMsg = `t-בחרת ${optionName} לאישור הקש 1 לביטול הקש 2`;
-    return new Response(`read=${confirmMsg}=ApiEnter,no,1,1,10,Digits,yes`, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    // מזהה הפקודה הפעם יהיה Confirm_X - ואנחנו שמים הכל על no כדי שימות המשיח ישתוק
+    return new Response(`read=${confirmMsg}=Confirm_${stepObj?.step_order},no,1,1,10,Digits,no`, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   }
 
-  // אחרת, מוצאים את השאלה הבאה הרגילה
+  // אחרת, מוצאים את השאלה הבאה
   const nextQuestion = allSteps?.find(s => !currentData[s.data_key]);
 
   if (!nextQuestion) {
@@ -92,13 +96,13 @@ export async function GET(request: Request) {
   
   let msg = "";
   if (canceledText) {
-     msg = `t-${canceledText}s-1.${prefix}${cleanContent}`; // הוספת שניה הפסקה
+     msg = `t-${canceledText}s-1.${prefix}${cleanContent}`; // אם בוטל, אומרים "הביטול נקלט" ואז שואלים שוב
   } else {
      msg = `${prefix}${cleanContent}`;
   }
 
-  // הפקודה הקלאסית (עם yes בסוף כדי להכריח את המערכת לקלוט שוב)
-  const response = `read=${msg}=ApiEnter,no,${nextQuestion.min_digits},${nextQuestion.max_digits},10,Digits,yes`;
+  // מזהה הפקודה הרגיל יהיה Val_X
+  const response = `read=${msg}=Val_${nextQuestion.step_order},no,${nextQuestion.min_digits},${nextQuestion.max_digits},10,Digits,no`;
 
   return new Response(response, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
 }
