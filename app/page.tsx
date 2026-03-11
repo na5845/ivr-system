@@ -5,15 +5,40 @@ export const revalidate = 0;
 const supabase = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_ANON_KEY!);
 const CAMPAIGN_ID = '11111111-1111-1111-1111-111111111111';
 
+// פונקציית עזר לתרגום ועיצוב התשובות
+function formatAnswer(value: string, type: string) {
+  if (!value) return null;
+
+  switch (type) {
+    case 'yes_no':
+      return value === '1' ? '✅ כן' : value === '2' ? '❌ לא' : value;
+    case 'date':
+      // הופך 01012024 ל- 01/01/2024
+      if (value.length === 8) {
+        return `${value.substring(0, 2)}/${value.substring(2, 4)}/${value.substring(4)}`;
+      }
+      return value;
+    case 'phone':
+      // עיצוב למספר טלפון עם מקף
+      if (value.length === 10) {
+        return `${value.substring(0, 3)}-${value.substring(3)}`;
+      }
+      return value;
+    case 'id':
+      // אפשר להוסיף עיצוב מיוחד לת.ז אם רוצים, כרגע נשאיר רגיל
+      return value;
+    default:
+      return value; // ברירת מחדל (number, choice, digits) מחזירה את המספר כמו שהוא
+  }
+}
+
 export default async function Home() {
-  // 1. שליפת השאלות (כדי לדעת אילו עמודות להציג)
   const { data: steps } = await supabase
     .from('campaign_steps')
     .select('*')
     .eq('campaign_id', CAMPAIGN_ID)
     .order('step_order', { ascending: true });
 
-  // 2. שליפת הלידים (התשובות של האנשים)
   const { data: leads, error } = await supabase
     .from('leads')
     .select('*')
@@ -48,10 +73,9 @@ export default async function Home() {
             <table className="w-full text-right border-collapse">
               <thead className="bg-slate-800 text-white">
                 <tr>
-                  <th className="p-4 font-semibold text-sm border-b border-slate-700">טלפון</th>
-                  <th className="p-4 font-semibold text-sm border-b border-slate-700">תאריך</th>
+                  <th className="p-4 font-semibold text-sm border-b border-slate-700">טלפון מזהה</th>
+                  <th className="p-4 font-semibold text-sm border-b border-slate-700">תאריך פנייה</th>
                   
-                  {/* יצירת עמודות דינמיות לפי השאלות שהגדרת */}
                   {steps?.map((step) => (
                     <th key={step.id} className="p-4 font-semibold text-sm border-b border-slate-700 min-w-[120px]">
                       {step.is_audio ? `שאלה ${step.step_order} (קובץ)` : step.message_content}
@@ -69,14 +93,16 @@ export default async function Home() {
                       })}
                     </td>
 
-                    {/* הצגת התשובות לפי המפתחות הדינמיים (step_1, step_2 וכו') */}
+                    {/* כאן אנחנו קוראים לפונקציית העיצוב שלנו! */}
                     {steps?.map((step) => {
-                      const answer = lead.data?.[step.data_key];
+                      const rawAnswer = lead.data?.[step.data_key];
+                      const formattedAnswer = formatAnswer(rawAnswer, step.question_type);
+                      
                       return (
                         <td key={step.id} className="p-4">
-                          {answer ? (
-                            <span className="bg-green-100 text-green-800 px-2 py-1 rounded text-sm font-medium">
-                              {answer}
+                          {formattedAnswer ? (
+                            <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium inline-block">
+                              {formattedAnswer}
                             </span>
                           ) : (
                             <span className="text-gray-300 text-xs">טרם נענה</span>
