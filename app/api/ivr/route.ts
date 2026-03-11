@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     console.log(`>>> Saved: ${keyToSave} = ${lastAnswer}`);
   }
 
-  // 2. בדיקה מול ה-DB לדעת מה חסר
+  // 2. בדיקה מול ה-DB מה השלב הבא
   const { data: checkLead } = await supabase
     .from('leads')
     .select('data')
@@ -44,14 +44,13 @@ export async function GET(request: Request) {
 
   const leadData = checkLead?.data || {};
   
-  // 3. פקודת read מושלמת - 7 פרמטרים חוקיים בלבד!
+  // 3. הפקודה המושלמת - שמנו '3' בפרמטר החמישי של ההמתנה כדי למנוע קריסה!
   let responseText = "";
   if (!leadData.map_type) {
-    responseText = "read=t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2=no,1,1,10,no,no,no";
+    responseText = "read=t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2=no,1,1,10,3,no,no";
   } else if (!leadData.map_size) {
-    responseText = "read=t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3=no,1,1,10,no,no,no";
+    responseText = "read=t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3=no,1,1,10,3,no,no";
   } else {
-    // שלב הסיום
     responseText = "id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה&hangup=yes";
   }
 
