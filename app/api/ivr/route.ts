@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     console.log(`>>> Saved: ${keyToSave} = ${lastAnswer}`);
   }
 
-  // 2. בדיקה מול ה-DB מה חסר
+  // 2. בדיקה מול ה-DB מה חסר (כדי לדעת מה לשאול)
   const { data: checkLead } = await supabase
     .from('leads')
     .select('data')
@@ -44,14 +44,15 @@ export async function GET(request: Request) {
 
   const leadData = checkLead?.data || {};
   
-  // 3. הפקודה הכי בסיסית: read עם 4 פרמטרים בלבד (השמעה, לא לחזור, מינימום 1, מקסימום 1, 10 שניות המתנה)
+  // 3. הפקודה עם בדיוק 7 פרמטרים!
+  // הסבר: אל_תבקש_אישור(no), מינימום(1), מקסימום(1), זמן_המתנה(10), סוג_הקשה(Digits), אישור_ללא_הקשה(no), הקשת_כוכבית(no)
   let responseText = "";
   if (!leadData.map_type) {
-    responseText = "read=t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2=no,1,1,10";
+    responseText = "read=t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2=no,1,1,10,Digits,no,no";
   } else if (!leadData.map_size) {
-    responseText = "read=t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3=no,1,1,10";
+    responseText = "read=t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3=no,1,1,10,Digits,no,no";
   } else {
-    // סיום השיחה משתמש ב-& כי אלו שתי פקודות רגילות
+    // סיום השיחה - משתמשים ב-& כדי לחבר שתי פקודות מערכת רגילות (שלא קשורות להקשה)
     responseText = "id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה&hangup=yes";
   }
 
