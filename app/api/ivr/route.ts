@@ -31,13 +31,14 @@ export async function GET(request: Request) {
     });
   }
 
-  // 3. איסוף תשובות חדשות מה-URL (אנחנו נחפש משתנים בשם ans_1, ans_2 וכו')
+  // 3. איסוף תשובות חדשות - הגדרת סוגים ל-TypeScript
   const currentData = lead?.data || {};
-  let newlyAnsweredStepKey = null;
-  let lastValueReceived = null;
+  let newlyAnsweredStepKey: string | null = null;
+  let lastValueReceived: string | null = null;
 
   allSteps?.forEach(step => {
     const answerFromUrl = searchParams.get(`ans_${step.step_order}`);
+    // אם קיבלנו תשובה ב-URL והיא עוד לא רשומה במסד הנתונים
     if (answerFromUrl && !currentData[step.data_key]) {
       currentData[step.data_key] = answerFromUrl;
       newlyAnsweredStepKey = step.data_key;
@@ -70,7 +71,7 @@ export async function GET(request: Request) {
 
   // הכנת טקסט אישור (אם התשובה האחרונה הייתה בחירה)
   let confirmationPrefix = "";
-  if (newlyAnsweredStepKey) {
+  if (newlyAnsweredStepKey && lastValueReceived) {
     const lastStepObj = allSteps?.find(s => s.data_key === newlyAnsweredStepKey);
     if (lastStepObj?.question_type === 'choice' && lastStepObj.options && lastStepObj.options[lastValueReceived]) {
       confirmationPrefix = `בחרת ${lastStepObj.options[lastValueReceived]}. `;
@@ -79,14 +80,12 @@ export async function GET(request: Request) {
 
   const cleanMsg = nextQuestion.message_content.replace(/[.,]/g, '');
   
-  // בניית הפקודה: 
-  // שימוש ב-ans_{order} כמשתנה הייחודי לשאלה זו
-  // הוספת s-1 להפסקה של שניה
-  // שימוש ב-yes בפרמטר ה-7 (check_existing) כדי להכריח אותו לשאול גם אם יש ערך
+  // בניית הפקודה עם משתנה ייחודי ans_{order}
   const varName = `ans_${nextQuestion.step_order}`;
   const audioPrefix = nextQuestion.is_audio ? '' : 't-';
   const fullMsg = confirmationPrefix ? `t-${confirmationPrefix}s-1.${audioPrefix}${cleanMsg}` : `${audioPrefix}${cleanMsg}`;
 
+  // שימוש ב-yes בפרמטר ה-7 כדי להכריח את ימות המשיח לשאול שוב
   const response = `read=${fullMsg}=${varName},no,${nextQuestion.min_digits},${nextQuestion.max_digits},10,Digits,yes`;
 
   return new Response(response, { 
