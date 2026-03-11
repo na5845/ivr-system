@@ -11,10 +11,10 @@ export async function GET(request: Request) {
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  let confirmationText = ""; // הטקסט שהרובוט יקריא כאישור
+  let confirmationText = ""; 
 
   // 1. שמירת התשובה הקודמת
-  if (lastAnswer && lastAnswer !== 'null') {
+  if (lastAnswer && lastAnswer !== 'null' && lastAnswer !== '') {
     const { data: lead } = await supabase.from('leads').select('data').eq('phone', phone).eq('campaign_id', campaignId).single();
     const { data: steps } = await supabase.from('campaign_steps').select('*').eq('campaign_id', campaignId).order('step_order', { ascending: true });
     
@@ -26,9 +26,9 @@ export async function GET(request: Request) {
         p_phone: phone, p_campaign_id: campaignId, p_key: answeredStep.data_key, p_value: lastAnswer
       });
 
-      // אם זו שאלת בחירה ויש לה תרגום מוגדר ב-options, נכין טקסט אישור להשמעה!
+      // ניקוי סימני פיסוק מהאישור כדי לא לשבור את המערכת
       if (answeredStep.question_type === 'choice' && answeredStep.options && answeredStep.options[lastAnswer]) {
-        confirmationText = `בחרת ${answeredStep.options[lastAnswer]}. `;
+        confirmationText = `בחרת ${answeredStep.options[lastAnswer]} `; 
       }
     }
   }
@@ -40,23 +40,32 @@ export async function GET(request: Request) {
   const currentData = leadAfter?.data || {};
   const currentQuestion = allSteps?.find(s => !currentData[s.data_key]);
 
+  // 3. בניית התגובה
   if (!currentQuestion) {
-    // השמעת אישור גם בשלב האחרון אם צריך
-    const finalMsg = confirmationText ? `t-${confirmationText}תודה רבה ההזמנה הושלמה` : `t-תודה רבה ההזמנה הושלמה`;
-    return new Response(`id_list_message=${finalMsg}&hangup=yes`, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    const finalTxt = confirmationText ? `t-${confirmationText} תודה רבה ההזמנה הושלמה` : `t-תודה רבה ההזמנה הושלמה`;
+    return new Response(`id_list_message=${finalTxt}\nhangup=yes`, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   }
 
-  // חיבור של מילת האישור (אם קיימת) לתחילת השאלה הבאה
-  const prefix = currentQuestion.is_audio ? '' : 't-';
-  
-  // אם השאלה הבאה היא שמע (audio), אנחנו לא יכולים לערבב אותה עם טקסט רובוטי בקלות באותה פקודה.
-  // אז נקריא את האישור רק אם השאלה הבאה היא גם טקסט (t-).
-  let msg = `${prefix}${currentQuestion.message_content}`;
-  if (!currentQuestion.is_audio && confirmationText) {
-    msg = `t-${confirmationText}${currentQuestion.message_content}`;
+  // בנייה זהירה של ההודעה:
+  // אם יש אישור קולי, הוא תמיד יתחיל ב-t-
+  // אנחנו ננקה את תוכן השאלה מנקודות ופסיקים
+  const cleanQuestionContent = currentQuestion.message_content.replace(/[.,]/g, '');
+  let msg = "";
+
+  if (currentQuestion.is_audio) {
+    // אם השאלה היא קובץ, נשמיע קודם את האישור (אם יש) ואז את הקובץ
+    msg = confirmationText ? `t-${confirmationText}.${currentQuestion.message_content}` : `${currentQuestion.message_content}`;
+  } else {
+    // אם השאלה היא טקסט, נחבר הכל תחת t- אחד נקי
+    msg = `t-${confirmationText}${cleanQuestionContent}`;
   }
 
+  // פקודת read נקייה לחלוטין
   const response = `read=${msg}=ApiEnter,no,${currentQuestion.min_digits},${currentQuestion.max_digits},10,Digits,no`;
+  
+  console.log(`>>> Sending to Yemot: ${response}`);
 
-  return new Response(response, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+  return new Response(response, { 
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' } 
+  });
 }
