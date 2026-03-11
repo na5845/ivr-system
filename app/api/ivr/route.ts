@@ -11,9 +11,9 @@ export async function GET(request: Request) {
   if (campaignId?.includes('?')) campaignId = campaignId.split('?')[0];
   if (!phone || !campaignId) return new Response('hangup=yes');
 
-  console.log(`>>> Incoming | Phone: ${phone} | Answer: ${lastAnswer}`);
+  console.log(`>>> Phone: ${phone} | ApiEnter: ${lastAnswer}`);
 
-  // 1. שמירת נתונים (State-based)
+  // 1. שמירת ההקשה ב-DB
   if (lastAnswer && lastAnswer !== 'null' && lastAnswer !== '') {
     const { data: lead } = await supabase
       .from('leads')
@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     console.log(`>>> Saved: ${keyToSave} = ${lastAnswer}`);
   }
 
-  // 2. בדיקת השלב הבא
+  // 2. בדיקה מול ה-DB מה חסר
   const { data: checkLead } = await supabase
     .from('leads')
     .select('data')
@@ -44,23 +44,20 @@ export async function GET(request: Request) {
 
   const leadData = checkLead?.data || {};
   
-  // 3. בניית התגובה בצורה הדוקה
+  // 3. הפקודה הכי בסיסית: read עם 4 פרמטרים בלבד (השמעה, לא לחזור, מינימום 1, מקסימום 1, 10 שניות המתנה)
   let responseText = "";
   if (!leadData.map_type) {
-    responseText = "id_list_message=t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2\nread=t-.=no,1,1,10,digits,no,no";
+    responseText = "read=t-לבחירת מפה ליום חול הקש 1 לבחירת מפה לשבת הקש 2=no,1,1,10";
   } else if (!leadData.map_size) {
-    responseText = "id_list_message=t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3\nread=t-.=no,1,1,10,digits,no,no";
+    responseText = "read=t-לבחירת מטר הקש 1 למטר וחצי הקש 2 לשני מטר הקש 3=no,1,1,10";
   } else {
-    responseText = "id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה\nhangup=yes";
+    // סיום השיחה משתמש ב-& כי אלו שתי פקודות רגילות
+    responseText = "id_list_message=t-תודה רבה בחירתך נשמרה בהצלחה&hangup=yes";
   }
 
-  // הדפסה ללוג בצורה שתראה לנו אם יש רווח בהתחלה (נשתמש בקידומת צמודה)
-  console.log(`>>> RESPONSE_START>${responseText}<RESPONSE_END`);
+  console.log(`>>> Sending: ${responseText}`);
 
   return new Response(responseText, {
-    headers: { 
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-cache'
-    }
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' }
   });
 }
